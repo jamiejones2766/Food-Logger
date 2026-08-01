@@ -54,7 +54,8 @@ body{
 .ed:focus{border-color:var(--ink)}
 .edlab{font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:.12em;font-size:10px;color:var(--mid);display:block}
 .pencil{background:none;border:none;color:var(--mid);cursor:pointer;padding:0 4px;font-size:13px}
-.daytype{display:flex;gap:4px;margin-bottom:18px}
+.daytype{display:flex;gap:4px;margin-bottom:6px}
+.dtwhy{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--mid);margin-bottom:16px}
 .dt{flex:1;padding:7px;border:1px solid var(--rule);background:transparent;color:var(--mid);
   font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:.1em;font-size:12px;font-weight:600;cursor:pointer}
 .dt.on{border-color:var(--ink);color:var(--ink);background:rgba(21,24,15,.07)}
@@ -254,6 +255,7 @@ button:focus-visible,textarea:focus-visible,input:focus-visible,select:focus-vis
         <button class="dt on" data-dt="normal">Normal</button>
         <button class="dt" data-dt="hard">Hard</button>
       </div>
+      <div id="dtWhy" class="dtwhy hide"></div>
       <div id="splits"></div>
     </section>
 
@@ -414,7 +416,13 @@ function render(){
     + splitRow("Carbs", t.carbs, g.carbs, "g")
     + splitRow("Fat", t.fat, g.fat, "g");
 
-  var dtNow = day().dayType;
+  var rec0 = day();
+  var whyEl = $("dtWhy");
+  if (whyEl){
+    whyEl.textContent = rec0.dayTypeWhy || "";
+    whyEl.classList.toggle("hide", !rec0.dayTypeWhy);
+  }
+  var dtNow = rec0.dayType;
   Array.prototype.forEach.call(document.querySelectorAll(".dt"), function(b){
     b.classList.toggle("on", b.dataset.dt === dtNow);
   });
@@ -501,6 +509,66 @@ function render(){
 
   var cached = !!S.library[$("input").value.trim().toLowerCase()];
   $("freshBtn").classList.toggle("hide", !cached || !!pending);
+}
+
+
+/* ── training bridge ──────────────────────────────────────────
+   The SESSION app writes jj.fuel.session on the same origin.
+   Read it first; fall back to the published plan so the morning
+   still gets a sensible target before anything is logged.
+   A manual tap always wins and stops auto-setting for that day.
+   ─────────────────────────────────────────────────────────── */
+var PLAN_URL = "https://raw.githubusercontent.com/jamiejones2766/session/main/data/plan.json";
+
+function maxRpe(v){
+  if (v == null) return null;
+  var nums = String(v).match(/\d+(\.\d+)?/g);
+  if (!nums) return null;
+  return Math.max.apply(null, nums.map(Number));
+}
+
+// Effort alone misreads short hard sessions and long easy ones,
+// so duration gets a say too.
+function classify(rpe, mins){
+  if (rpe == null && !mins) return null;
+  if (rpe != null && rpe >= 7) return "hard";
+  if (mins && mins >= 60) return "hard";
+  if (rpe != null && rpe <= 2 && !mins) return "rest";
+  return "normal";
+}
+
+function applyFuelSource(){
+  var k = activeKey(), rec = day();
+  if (rec.dayTypeManual) return;
+
+  var src = null;
+  try {
+    var raw = localStorage.getItem("jj.fuel.session");
+    if (raw){
+      var s = JSON.parse(raw);
+      if (s && s.date === k) src = { rpe:maxRpe(s.rpe), mins:s.mins, why:"logged: "+(s.title||"session") };
+    }
+  } catch(e){}
+
+  if (src){
+    setAuto(src, rec);
+    return;
+  }
+
+  fetch(PLAN_URL + "?ts=" + Date.now()).then(function(r){ return r.json(); }).then(function(p){
+    var d = p && p.days && p.days[k];
+    if (!d) return;
+    var mins = (d.blocks||[]).reduce(function(a,b){ return a + (b.secs||0); }, 0) / 60;
+    setAuto({ rpe:maxRpe(d.rpe), mins:Math.round(mins)||null, why:"planned: "+(d.title||"session") }, day());
+  }).catch(function(){});
+}
+
+function setAuto(src, rec){
+  var t = classify(src.rpe, src.mins);
+  if (!t || rec.dayTypeManual) return;
+  rec.dayType = t;
+  rec.dayTypeWhy = src.why;
+  save(); render();
 }
 
 /* ---------- logging ---------- */
@@ -710,7 +778,12 @@ function startApp(){
   $("setup").classList.add("hide");
   $("app").classList.remove("hide");
   render();
+  applyFuelSource();
 }
+
+document.addEventListener("visibilitychange", function(){
+  if (!document.hidden && S) applyFuelSource();
+});
 
 $("saveKey").onclick = function(){
   var v = $("keyInput").value.trim();
@@ -852,12 +925,16 @@ document.addEventListener("click", function(e){
     }
   }
   if (t.dataset && t.dataset.dt){
-    day().dayType = t.dataset.dt; save(); render();
+    var dd = day();
+    dd.dayType = t.dataset.dt;
+    dd.dayTypeManual = true;
+    dd.dayTypeWhy = "set by you";
+    save(); render();
   }
   if (t.dataset && t.dataset.off){
     activeOffset = Number(t.dataset.off);
     editingId = null;
-    clearErr(); render();
+    clearErr(); render(); applyFuelSource();
   }
   if (t.dataset && t.dataset.del){
     var d = day();
