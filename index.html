@@ -272,6 +272,12 @@ button:focus-visible,textarea:focus-visible,input:focus-visible,select:focus-vis
         <div><span class="eyebrow">Days logged</span><b id="avgD">–</b></div>
       </div>
       <p class="fine">The weekly average is the number worth watching. Single days swing too much to mean anything on their own.</p>
+      <div class="actions">
+        <button class="btn" id="copyWeek">Copy my week</button>
+        <button class="btn ghost" id="copyWeek14">Last 14 days</button>
+      </div>
+      <textarea id="weekOut" class="data hide" rows="6" readonly></textarea>
+      <p class="fine" id="weekHint" style="display:none">Copied. Paste it into Claude and ask for a review.</p>
     </section>
   </div>
 </div>
@@ -651,6 +657,68 @@ $("restoreData").onclick = function(){
     save(); $("dataPanel").classList.add("hide"); render();
   } catch(e){ alert("That isn't valid log data."); }
 };
+
+function buildExport(nDays){
+  var s = S.settings;
+  var L = [];
+  L.push("FOOD LOG EXPORT — last " + nDays + " days, to " + pretty(dayKey(0)));
+  L.push("Athlete targets (normal day): " + s.kcal + " kcal / " + s.protein
+       + "g protein / " + s.carbs + "g carbs / " + s.fat + "g fat");
+  L.push("Rest day scales kcal x0.88 and carbs x0.75. Hard day scales kcal x1.15 and carbs x1.3.");
+  L.push("Confidence: high = labelled or plain food, medium = home-cooked, low = eating out (estimated high).");
+  L.push("");
+
+  var tot = {kcal:0,protein:0,carbs:0,fat:0}, logged = 0, low = 0, items = 0;
+
+  for (var d = -(nDays-1); d <= 0; d++){
+    var k = dayKey(d), rec = S.logs[k];
+    if (!rec || !rec.entries.length){ L.push(pretty(k) + " — nothing logged"); L.push(""); continue; }
+    var t = rec.entries.reduce(function(a,e){
+      a.kcal+=e.kcal||0; a.protein+=e.protein||0; a.carbs+=e.carbs||0; a.fat+=e.fat||0; return a;
+    }, {kcal:0,protein:0,carbs:0,fat:0});
+    var m = DT[rec.dayType] || DT.normal;
+    logged++;
+    tot.kcal+=t.kcal; tot.protein+=t.protein; tot.carbs+=t.carbs; tot.fat+=t.fat;
+
+    L.push(pretty(k) + " — " + rec.dayType + " day");
+    L.push("  Total: " + t.kcal + " kcal, " + t.protein + "P, " + t.carbs + "C, " + t.fat + "F"
+         + "   (target " + r(s.kcal*m.kcal) + " kcal, " + s.protein + "P, " + r(s.carbs*m.carbs) + "C, " + s.fat + "F)");
+    rec.entries.forEach(function(e){
+      items++;
+      if (e.confidence === "low") low++;
+      L.push("  " + (e.ts && e.ts !== "—" ? e.ts + "  " : "      ")
+           + e.name + " — " + (e.qty || fmtAmt(e.amount) + unitLabel(e.unit))
+           + " — " + e.kcal + " kcal, " + e.protein + "P, " + e.carbs + "C, " + e.fat + "F"
+           + " [" + e.confidence + "]"
+           + (e.note ? " (" + e.note + ")" : ""));
+    });
+    L.push("");
+  }
+
+  L.push("SUMMARY");
+  L.push("Days logged: " + logged + " of " + nDays);
+  if (logged){
+    L.push("Daily average across logged days: " + r(tot.kcal/logged) + " kcal, "
+         + r(tot.protein/logged) + "P, " + r(tot.carbs/logged) + "C, " + r(tot.fat/logged) + "F");
+    L.push("Items logged: " + items + ", of which " + low + " were low-confidence (eating out).");
+  }
+  L.push("");
+  L.push("Note: days with no entries mean nothing was logged, not that nothing was eaten.");
+  return L.join("\n");
+}
+
+function doExport(n){
+  var box = $("weekOut");
+  box.value = buildExport(n);
+  box.classList.remove("hide");
+  box.select();
+  try { document.execCommand("copy"); } catch(e){}
+  if (navigator.clipboard) navigator.clipboard.writeText(box.value);
+  $("weekHint").style.display = "block";
+}
+
+$("copyWeek").onclick = function(){ doExport(7); };
+$("copyWeek14").onclick = function(){ doExport(14); };
 
 $("logBtn").onclick = function(){ submit(false); };
 $("freshBtn").onclick = function(){ submit(true); };
