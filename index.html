@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Food Log</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Food Log">
+<meta name="theme-color" content="#9DA69B">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --field:#9DA69B; --card:#F5F4EF; --ink:#15180F; --mid:#6C7266;
+  --rule:#D6D4CA; --signal:#1E3FAE; --warn:#9A5B12;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;background:var(--field)}
+body{
+  color:var(--ink); font-family:'Barlow',system-ui,-apple-system,sans-serif;
+  font-size:16px; line-height:1.45; -webkit-font-smoothing:antialiased;
+  padding:max(14px,env(safe-area-inset-top)) 12px calc(40px + env(safe-area-inset-bottom));
+  max-width:620px; margin:0 auto;
+}
+.hide{display:none !important}
+
+.head{margin-bottom:12px}
+.headline{display:flex;align-items:baseline;justify-content:space-between}
+.date{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:30px;letter-spacing:.06em;line-height:1}
+.gear{background:none;border:none;padding:4px 0;cursor:pointer;font-family:'Barlow Condensed',sans-serif;
+  text-transform:uppercase;letter-spacing:.14em;font-size:13px;color:var(--ink);opacity:.7;border-bottom:1px solid var(--ink)}
+.tabs{display:flex;gap:4px;margin-top:12px}
+.tab{flex:1;padding:8px;border:1px solid rgba(21,24,15,.35);background:transparent;color:var(--ink);
+  font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:.12em;font-size:13px;font-weight:600;cursor:pointer}
+.tab.on{background:var(--ink);color:var(--card);border-color:var(--ink)}
+
+.card{background:var(--card);padding:16px 14px;margin-bottom:12px}
+.warnbox{border-left:3px solid var(--warn)}
+.eyebrow{font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:.16em;
+  font-size:11px;font-weight:600;color:var(--mid)}
+.eyebrow.warn{color:var(--warn)}
+
+.daytype{display:flex;gap:4px;margin-bottom:18px}
+.dt{flex:1;padding:7px;border:1px solid var(--rule);background:transparent;color:var(--mid);
+  font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:.1em;font-size:12px;font-weight:600;cursor:pointer}
+.dt.on{border-color:var(--ink);color:var(--ink);background:rgba(21,24,15,.07)}
+
+.split{margin-bottom:14px}
+.split.big{margin-bottom:20px}
+.split-head{display:flex;align-items:baseline;gap:8px;margin-bottom:5px}
+.split-head .eyebrow{flex:1}
+.num{font-family:'IBM Plex Mono',monospace;font-weight:500;font-size:17px;font-variant-numeric:tabular-nums}
+.split.big .num{font-size:40px;letter-spacing:-.02em}
+.delta{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--mid);font-variant-numeric:tabular-nums}
+.delta.over{color:var(--warn)}
+.bar{position:relative;height:7px;background:rgba(21,24,15,.1)}
+.split.big .bar{height:11px}
+.fill{position:absolute;left:0;top:0;bottom:0;background:var(--ink);transition:width .35s ease}
+.fill.over{background:var(--warn)}
+.tick{position:absolute;left:71.43%;top:-3px;bottom:-3px;width:2px;background:var(--ink);z-index:2}
+
+.input{width:100%;background:var(--card);border:none;border-left:3px solid var(--ink);padding:13px;
+  font-family:'Barlow',sans-serif;font-size:16px;color:var(--ink);resize:none;outline:none;display:block}
+.input::placeholder{color:var(--mid)}
+.input:focus{box-shadow:inset 0 0 0 1px var(--ink)}
+.btn{padding:11px 16px;border:1px solid var(--ink);background:var(--ink);color:var(--card);
+  font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:.14em;font-size:13px;font-weight:600;cursor:pointer}
+.btn.wide{width:100%;margin-top:4px;display:block}
+.btn.ghost{background:transparent;color:var(--ink)}
+.btn:disabled{opacity:.45;cursor:default}
+.relink{display:block;width:100%;margin-top:6px;background:none;border:none;font-family:'Barlow',sans-serif;
+  font-size:13px;color:var(--ink);text-decoration:underline;cursor:pointer;padding:4px;opacity:.75}
+.actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+
+.err{background:var(--card);border-left:3px solid var(--warn);padding:11px 13px;font-size:14px;margin-bottom:12px;color:var(--warn)}
+
+.entries{display:flex;flex-direction:column;gap:1px}
+.entry{background:var(--card);padding:11px 13px}
+.entry.pending{opacity:.6}
+.entry-top{display:flex;align-items:baseline;gap:8px}
+.mark{font-family:'IBM Plex Mono',monospace;font-size:13px}
+.c-high{color:var(--ink)} .c-medium{color:var(--signal)} .c-low{color:var(--warn)}
+.nm{flex:1;font-weight:600;font-size:15px}
+.time{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--mid)}
+.x{background:none;border:none;font-size:19px;line-height:1;color:var(--mid);cursor:pointer;padding:0 2px}
+.qty{font-size:13px;color:var(--mid);margin:2px 0 0 21px}
+.recall{font-family:'IBM Plex Mono',monospace;font-size:11px}
+.note{font-size:12px;color:var(--warn);margin:3px 0 0 21px;font-style:italic}
+.macros{display:flex;gap:12px;margin:6px 0 0 21px;font-family:'IBM Plex Mono',monospace;
+  font-size:13px;font-variant-numeric:tabular-nums;color:var(--mid)}
+.macros b{color:var(--ink);font-weight:600}
+.empty{background:var(--card);padding:22px 14px;font-size:14px;color:var(--mid)}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:14px;font-size:11px;color:rgba(21,24,15,.6)}
+.legend i{font-style:normal;font-family:'IBM Plex Mono',monospace}
+
+.week{display:flex;gap:5px;align-items:flex-end;height:150px;margin:14px 0 6px}
+.wcol{flex:1;display:flex;flex-direction:column;height:100%}
+.wbar{position:relative;flex:1;background:rgba(21,24,15,.08)}
+.wfill{position:absolute;left:0;right:0;bottom:0;background:var(--ink);transition:height .35s ease}
+.wtick{position:absolute;left:-1px;right:-1px;height:2px;background:var(--warn);z-index:2}
+.wlabel{font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;font-size:11px;
+  letter-spacing:.08em;color:var(--mid);text-align:center;margin-top:5px}
+.wval{font-family:'IBM Plex Mono',monospace;font-size:10px;text-align:center;color:var(--mid)}
+.avg{display:flex;gap:16px;padding-top:14px;border-top:1px solid var(--rule)}
+.avg>div{flex:1}
+.avg span{display:block}
+.avg b{font-family:'IBM Plex Mono',monospace;font-size:21px;font-weight:500;font-variant-numeric:tabular-nums}
+
+.fields{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:12px 0}
+.field{display:flex;flex-direction:column;gap:3px}
+.field span{font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:.12em;font-size:11px;color:var(--mid)}
+.field input,.field select{border:1px solid var(--rule);padding:9px;font-family:'IBM Plex Mono',monospace;
+  font-size:15px;background:#fff;color:var(--ink);width:100%}
+.field.wide{grid-column:1/-1}
+.field input:focus,.field select:focus{outline:none;border-color:var(--ink)}
+.fine{font-size:12px;color:var(--mid);line-height:1.45;margin:10px 0 0}
+.fine a{color:var(--signal)}
+.code{display:block;font-family:'IBM Plex Mono',monospace;font-size:11px;background:rgba(21,24,15,.06);
+  padding:7px 9px;margin-top:9px;color:var(--mid);word-break:break-all;line-height:1.4}
+.data{width:100%;margin-top:9px;border:1px solid var(--rule);padding:8px;font-family:'IBM Plex Mono',monospace;
+  font-size:11px;background:#fff;color:var(--ink);resize:vertical;outline:none}
+
+button:focus-visible,textarea:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{transition:none !important}}
+@media (max-width:420px){.split.big .num{font-size:34px} .fields{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<!-- ============ SETUP ============ -->
+<section id="setup" class="hide">
+  <div class="date" style="margin-bottom:14px">FOOD LOG</div>
+  <div class="card">
+    <div class="eyebrow">One-time setup</div>
+    <p class="fine">
+      This app sends what you type to Claude to work out the macros. It needs
+      your own Anthropic API key. The key is stored on this device only and is
+      never sent anywhere except Anthropic.
+    </p>
+    <p class="fine">
+      Get one at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>
+      — you'll need a few pounds of credit on the account. Typical use here is
+      well under £1 a month.
+    </p>
+    <div class="fields">
+      <label class="field wide">
+        <span>API key</span>
+        <input id="keyInput" type="password" placeholder="sk-ant-..." autocomplete="off">
+      </label>
+    </div>
+    <div class="actions">
+      <button class="btn" id="saveKey">Save key and start</button>
+    </div>
+    <div id="setupErr" class="fine hide" style="color:var(--warn)"></div>
+  </div>
+</section>
+
+<!-- ============ APP ============ -->
+<div id="app" class="hide">
+  <header class="head">
+    <div class="headline">
+      <span class="date" id="dateLabel"></span>
+      <button class="gear" id="openSettings">Settings</button>
+    </div>
+    <div class="tabs">
+      <button class="tab on" data-view="today">Today</button>
+      <button class="tab" data-view="week">Week</button>
+    </div>
+  </header>
+
+  <!-- settings -->
+  <section id="settings" class="card hide">
+    <div class="eyebrow">Daily targets</div>
+    <div class="fields">
+      <label class="field"><span>Weight (kg)</span><input id="f_weight" type="number" inputmode="decimal"></label>
+      <label class="field"><span>Calories</span><input id="f_kcal" type="number" inputmode="numeric"></label>
+      <label class="field"><span>Protein (g)</span><input id="f_protein" type="number" inputmode="numeric"></label>
+      <label class="field"><span>Carbs (g)</span><input id="f_carbs" type="number" inputmode="numeric"></label>
+      <label class="field"><span>Fat (g)</span><input id="f_fat" type="number" inputmode="numeric"></label>
+      <label class="field"><span>Model</span>
+        <select id="f_model">
+          <option value="claude-haiku-4-5-20251001">Haiku — fast, cheapest</option>
+          <option value="claude-sonnet-5">Sonnet — better on odd foods</option>
+        </select>
+      </label>
+    </div>
+    <p class="fine">Normal-day numbers. Rest and hard days scale calories and carbs from here; protein and fat stay put.</p>
+    <div class="actions">
+      <button class="btn" id="saveSettings">Save</button>
+      <button class="btn ghost" id="closeSettings">Cancel</button>
+      <button class="btn ghost" id="openData">Data</button>
+      <button class="btn ghost" id="changeKey">Change key</button>
+    </div>
+  </section>
+
+  <!-- data export/import -->
+  <section id="dataPanel" class="card hide">
+    <div class="eyebrow">Your data</div>
+    <p class="fine">Copy this somewhere safe as a backup. Paste it back to restore.</p>
+    <textarea id="dataBox" class="data" rows="5"></textarea>
+    <div class="actions">
+      <button class="btn" id="restoreData">Restore from paste</button>
+      <button class="btn ghost" id="copyData">Copy</button>
+      <button class="btn ghost" id="closeData">Close</button>
+    </div>
+  </section>
+
+  <!-- TODAY -->
+  <div id="viewToday">
+    <section class="card">
+      <div class="daytype">
+        <button class="dt" data-dt="rest">Rest</button>
+        <button class="dt on" data-dt="normal">Normal</button>
+        <button class="dt" data-dt="hard">Hard</button>
+      </div>
+      <div id="splits"></div>
+    </section>
+
+    <section>
+      <textarea id="input" class="input" rows="2" placeholder="What did you eat?"></textarea>
+      <button class="btn wide" id="logBtn">Log it</button>
+      <button class="relink hide" id="freshBtn">Logged this before — estimate fresh instead</button>
+    </section>
+
+    <div id="err" class="err hide" style="margin-top:12px"></div>
+    <section class="entries" id="entries" style="margin-top:12px"></section>
+
+    <footer class="legend">
+      <span><i class="mark c-high">●</i> Labelled or plain whole food</span>
+      <span><i class="mark c-medium">◐</i> Home-cooked, ingredients known</span>
+      <span><i class="mark c-low">○</i> Eating out — estimated high</span>
+    </footer>
+  </div>
+
+  <!-- WEEK -->
+  <div id="viewWeek" class="hide">
+    <section class="card">
+      <div class="eyebrow">Last 7 days</div>
+      <div class="week" id="week"></div>
+      <div class="avg">
+        <div><span class="eyebrow">Avg calories</span><b id="avgK">–</b></div>
+        <div><span class="eyebrow">Avg protein</span><b id="avgP">–</b></div>
+        <div><span class="eyebrow">Days logged</span><b id="avgD">–</b></div>
+      </div>
+      <p class="fine">The weekly average is the number worth watching. Single days swing too much to mean anything on their own.</p>
+    </section>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+var SKEY = "foodlog.state.v1";
+var KKEY = "foodlog.key.v1";
+
+var DEFAULTS = {
+  settings: { weight:80, kcal:2600, protein:170, carbs:280, fat:80, model:"claude-haiku-4-5-20251001" },
+  library: {},
+  logs: {}
+};
+
+var DT = {
+  rest:   { kcal:0.88, carbs:0.75 },
+  normal: { kcal:1,    carbs:1    },
+  hard:   { kcal:1.15, carbs:1.3  }
+};
+
+var MARK = { high:"●", medium:"◐", low:"○" };
+
+var S = null, KEY = null, view = "today", pending = null;
+
+/* ---------- helpers ---------- */
+function $(id){ return document.getElementById(id); }
+function r(n){ n = Number(n); return isFinite(n) ? Math.round(n) : 0; }
+function esc(s){ return String(s == null ? "" : s).replace(/[&<>"]/g, function(c){
+  return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]; }); }
+function dayKey(off){
+  var d = new Date();
+  if (off) d.setDate(d.getDate() + off);
+  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+}
+function pretty(k){
+  var p = k.split("-");
+  var d = new Date(+p[0], +p[1]-1, +p[2]);
+  return d.toLocaleDateString("en-GB",{weekday:"short",day:"2-digit",month:"short"}).toUpperCase();
+}
+function load(){
+  try { var raw = localStorage.getItem(SKEY); if (raw) return Object.assign({}, DEFAULTS, JSON.parse(raw)); }
+  catch(e){}
+  return JSON.parse(JSON.stringify(DEFAULTS));
+}
+function save(){
+  try { localStorage.setItem(SKEY, JSON.stringify(S)); }
+  catch(e){ showErr("Couldn't save to this device: " + e.message); }
+}
+function today(){
+  var k = dayKey(0);
+  if (!S.logs[k]) S.logs[k] = { dayType:"normal", entries:[] };
+  return S.logs[k];
+}
+function targets(){
+  var m = DT[today().dayType] || DT.normal;
+  return { kcal:r(S.settings.kcal*m.kcal), protein:r(S.settings.protein),
+           carbs:r(S.settings.carbs*m.carbs), fat:r(S.settings.fat) };
+}
+function totals(){
+  return today().entries.reduce(function(a,e){
+    a.kcal+=e.kcal||0; a.protein+=e.protein||0; a.carbs+=e.carbs||0; a.fat+=e.fat||0; return a;
+  }, {kcal:0,protein:0,carbs:0,fat:0});
+}
+function showErr(msg){ var el=$("err"); el.textContent=msg; el.classList.remove("hide"); }
+function clearErr(){ $("err").classList.add("hide"); }
+
+/* ---------- render ---------- */
+function splitRow(label, val, tgt, unit, big){
+  var pct = Math.min((val / (tgt*1.4 || 1)) * 100, 100);
+  var over = val > tgt, delta = val - tgt;
+  return '<div class="split'+(big?" big":"")+'">'
+    + '<div class="split-head"><span class="eyebrow">'+label+'</span>'
+    + '<span class="num">'+val+unit+'</span>'
+    + '<span class="delta'+(over?" over":"")+'">'+(over ? "+"+delta : Math.abs(delta)+" left")+'</span></div>'
+    + '<div class="bar"><div class="tick"></div><div class="fill'+(over?" over":"")+'" style="width:'+pct+'%"></div></div></div>';
+}
+
+function render(){
+  $("dateLabel").textContent = pretty(dayKey(0));
+
+  var t = totals(), g = targets();
+  $("splits").innerHTML =
+      splitRow("Calories", t.kcal, g.kcal, "", true)
+    + splitRow("Protein", t.protein, g.protein, "g")
+    + splitRow("Carbs", t.carbs, g.carbs, "g")
+    + splitRow("Fat", t.fat, g.fat, "g");
+
+  var dtNow = today().dayType;
+  Array.prototype.forEach.call(document.querySelectorAll(".dt"), function(b){
+    b.classList.toggle("on", b.dataset.dt === dtNow);
+  });
+
+  var html = "";
+  if (pending){
+    html += '<div class="entry pending"><div class="entry-top"><span class="mark">◌</span>'
+         +  '<span class="nm">'+esc(pending)+'</span></div><div class="qty">Estimating…</div></div>';
+  }
+  var list = today().entries.slice().reverse();
+  for (var i=0;i<list.length;i++){
+    var e = list[i];
+    html += '<div class="entry"><div class="entry-top">'
+      + '<span class="mark c-'+e.confidence+'">'+MARK[e.confidence]+'</span>'
+      + '<span class="nm">'+esc(e.name)+'</span>'
+      + '<span class="time">'+esc(e.ts)+'</span>'
+      + '<button class="x" data-del="'+e.id+'" aria-label="Remove">×</button></div>'
+      + '<div class="qty">'+esc(e.qty)+(e.cached?'<span class="recall"> · recalled</span>':'')+'</div>'
+      + (e.note ? '<div class="note">'+esc(e.note)+'</div>' : '')
+      + '<div class="macros"><b>'+e.kcal+'</b><span>P'+e.protein+'</span><span>C'+e.carbs+'</span><span>F'+e.fat+'</span></div></div>';
+  }
+  if (!list.length && !pending){
+    html = '<div class="empty">Nothing logged yet. Type what you ate above — plain English, rough amounts are fine.</div>';
+  }
+  $("entries").innerHTML = html;
+
+  // week
+  var days = [], max = 1;
+  for (var d=-6; d<=0; d++){
+    var k = dayKey(d), rec = S.logs[k];
+    var kc = rec ? rec.entries.reduce(function(a,e){return a+(e.kcal||0);},0) : 0;
+    var pr = rec ? rec.entries.reduce(function(a,e){return a+(e.protein||0);},0) : 0;
+    var tg = r(S.settings.kcal * (DT[(rec&&rec.dayType)||"normal"].kcal));
+    max = Math.max(max, kc, tg);
+    days.push({k:k,kcal:kc,protein:pr,target:tg});
+  }
+  $("week").innerHTML = days.map(function(w){
+    return '<div class="wcol"><div class="wbar">'
+      + '<div class="wtick" style="bottom:'+(w.target/max*100)+'%"></div>'
+      + '<div class="wfill" style="height:'+(w.kcal/max*100)+'%"></div></div>'
+      + '<div class="wlabel">'+pretty(w.k).split(" ")[0]+'</div>'
+      + '<div class="wval">'+(w.kcal||"–")+'</div></div>';
+  }).join("");
+  var done = days.filter(function(w){return w.kcal>0;});
+  $("avgK").textContent = done.length ? r(done.reduce(function(a,w){return a+w.kcal;},0)/done.length) : "–";
+  $("avgP").textContent = done.length ? r(done.reduce(function(a,w){return a+w.protein;},0)/done.length)+"g" : "–";
+  $("avgD").textContent = done.length + "/7";
+
+  var cached = !!S.library[$("input").value.trim().toLowerCase()];
+  $("freshBtn").classList.toggle("hide", !cached || !!pending);
+}
+
+/* ---------- logging ---------- */
+function addItems(items, cached){
+  var now = new Date().toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"});
+  var day = today();
+  items.forEach(function(it,i){
+    day.entries.push(Object.assign({}, it, { id:String(Date.now())+"-"+i, ts:now, cached:!!cached }));
+  });
+  save(); render();
+}
+
+function buildPrompt(raw){
+  var lib = Object.keys(S.library).slice(-40).map(function(k){ return {input:k, items:S.library[k]}; });
+  var y = (S.logs[dayKey(-1)] || {entries:[]}).entries.map(function(e){ return {name:e.name, qty:e.qty}; });
+  return [
+"You are a nutrition estimator for a serious amateur athlete in the UK. Return ONLY a JSON array. No markdown fences, no preamble, no explanation.",
+"",
+'Each element must be: {"name": string, "qty": string, "kcal": number, "protein": number, "carbs": number, "fat": number, "confidence": "high"|"medium"|"low", "note": string}',
+"",
+"Rules:",
+"- Split the input into separate items where sensible (a meal with three components = three elements).",
+'- "qty" is the portion you assumed, stated concretely (e.g. "60g oats, 250ml semi-skimmed milk"). Never leave it vague.',
+'- "note" is a short flag ONLY when you made a meaningful assumption or estimated high. Otherwise "".',
+'- confidence: "high" = packaged/labelled item or plain whole food. "medium" = home-cooked with known ingredients. "low" = restaurant, takeaway or unknown preparation.',
+"- For restaurant and takeaway food estimate on the HIGH side (assume generous oil and butter) and say so in note.",
+"- Macros in grams, kcal a whole number, numerically consistent.",
+"- Assume UK foods, UK brands and UK portion conventions.",
+"",
+"Foods this user has logged before — reuse those numbers if the input clearly refers to one:",
+JSON.stringify(lib),
+"",
+'What they ate yesterday, for resolving "same as yesterday" or "the usual":',
+JSON.stringify(y),
+"",
+"Input: " + raw
+  ].join("\n");
+}
+
+function submit(fresh){
+  var raw = $("input").value.trim();
+  if (!raw || pending) return;
+  clearErr();
+  var ck = raw.toLowerCase();
+
+  if (!fresh && S.library[ck]){
+    $("input").value = "";
+    addItems(S.library[ck], true);
+    return;
+  }
+
+  pending = raw;
+  $("input").value = "";
+  $("logBtn").textContent = "Working it out…";
+  $("logBtn").disabled = true;
+  render();
+
+  fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": KEY,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true"
+    },
+    body: JSON.stringify({
+      model: S.settings.model || DEFAULTS.settings.model,
+      max_tokens: 1200,
+      messages: [{ role:"user", content: buildPrompt(raw) }]
+    })
+  })
+  .then(function(res){ return res.json(); })
+  .then(function(data){
+    if (data.error) throw new Error(data.error.message || "API error");
+    var text = (data.content || [])
+      .filter(function(c){ return c.type === "text"; })
+      .map(function(c){ return c.text; })
+      .join("")
+      .replace(/```json|```/g, "")
+      .trim();
+    var items = JSON.parse(text);
+    if (!Array.isArray(items) || !items.length) throw new Error("No items came back.");
+
+    var clean = items.map(function(it){
+      return {
+        name: String(it.name || "Unnamed"),
+        qty: String(it.qty || ""),
+        kcal: r(it.kcal), protein: r(it.protein), carbs: r(it.carbs), fat: r(it.fat),
+        confidence: MARK[it.confidence] ? it.confidence : "medium",
+        note: String(it.note || "")
+      };
+    });
+
+    S.library[raw.toLowerCase()] = clean;
+    pending = null;
+    addItems(clean, false);
+  })
+  .catch(function(e){
+    pending = null;
+    $("input").value = raw;
+    showErr(/api key|authentication|401/i.test(e.message)
+      ? "Your API key was rejected. Check it under Settings → Change key."
+      : 'Couldn\'t log "' + raw + '": ' + e.message);
+    render();
+  })
+  .then(function(){
+    $("logBtn").textContent = "Log it";
+    $("logBtn").disabled = false;
+  });
+}
+
+/* ---------- wiring ---------- */
+function fillSettings(){
+  $("f_weight").value = S.settings.weight;
+  $("f_kcal").value = S.settings.kcal;
+  $("f_protein").value = S.settings.protein;
+  $("f_carbs").value = S.settings.carbs;
+  $("f_fat").value = S.settings.fat;
+  $("f_model").value = S.settings.model || DEFAULTS.settings.model;
+}
+
+function startApp(){
+  S = load();
+  $("setup").classList.add("hide");
+  $("app").classList.remove("hide");
+  render();
+}
+
+$("saveKey").onclick = function(){
+  var v = $("keyInput").value.trim();
+  if (!v){ $("setupErr").textContent = "Paste your key first."; $("setupErr").classList.remove("hide"); return; }
+  localStorage.setItem(KKEY, v);
+  KEY = v;
+  startApp();
+};
+
+$("openSettings").onclick = function(){ fillSettings(); $("settings").classList.remove("hide"); };
+$("closeSettings").onclick = function(){ $("settings").classList.add("hide"); };
+$("saveSettings").onclick = function(){
+  S.settings = {
+    weight: r($("f_weight").value), kcal: r($("f_kcal").value),
+    protein: r($("f_protein").value), carbs: r($("f_carbs").value),
+    fat: r($("f_fat").value), model: $("f_model").value
+  };
+  save(); $("settings").classList.add("hide"); render();
+};
+$("changeKey").onclick = function(){
+  localStorage.removeItem(KKEY);
+  $("app").classList.add("hide");
+  $("keyInput").value = "";
+  $("setup").classList.remove("hide");
+};
+
+$("openData").onclick = function(){
+  $("dataBox").value = JSON.stringify(S);
+  $("settings").classList.add("hide");
+  $("dataPanel").classList.remove("hide");
+};
+$("closeData").onclick = function(){ $("dataPanel").classList.add("hide"); };
+$("copyData").onclick = function(){
+  $("dataBox").select();
+  try { document.execCommand("copy"); } catch(e){}
+  if (navigator.clipboard) navigator.clipboard.writeText($("dataBox").value);
+};
+$("restoreData").onclick = function(){
+  try {
+    S = Object.assign({}, DEFAULTS, JSON.parse($("dataBox").value));
+    save(); $("dataPanel").classList.add("hide"); render();
+  } catch(e){ alert("That isn't valid log data."); }
+};
+
+$("logBtn").onclick = function(){ submit(false); };
+$("freshBtn").onclick = function(){ submit(true); };
+$("input").addEventListener("input", render);
+$("input").addEventListener("keydown", function(e){
+  if (e.key === "Enter" && !e.shiftKey){ e.preventDefault(); submit(false); }
+});
+
+document.addEventListener("click", function(e){
+  var t = e.target;
+  if (t.dataset && t.dataset.dt){
+    today().dayType = t.dataset.dt; save(); render();
+  }
+  if (t.dataset && t.dataset.del){
+    var day = today();
+    day.entries = day.entries.filter(function(x){ return x.id !== t.dataset.del; });
+    save(); render();
+  }
+  if (t.dataset && t.dataset.view){
+    view = t.dataset.view;
+    Array.prototype.forEach.call(document.querySelectorAll(".tab"), function(b){
+      b.classList.toggle("on", b.dataset.view === view);
+    });
+    $("viewToday").classList.toggle("hide", view !== "today");
+    $("viewWeek").classList.toggle("hide", view !== "week");
+  }
+});
+
+/* ---------- boot ---------- */
+KEY = localStorage.getItem(KKEY);
+if (KEY) startApp();
+else $("setup").classList.remove("hide");
+</script>
+</body>
+</html>
