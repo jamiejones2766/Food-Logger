@@ -42,6 +42,18 @@ body{
   font-size:11px;font-weight:600;color:var(--mid)}
 .eyebrow.warn{color:var(--warn)}
 
+.dayswitch{display:flex;gap:4px;margin-bottom:12px}
+.ds{flex:1;padding:8px;border:1px solid rgba(21,24,15,.3);background:transparent;color:var(--ink);opacity:.6;
+  font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:.12em;font-size:12px;font-weight:600;cursor:pointer}
+.ds.on{opacity:1;background:var(--card);border-color:var(--ink)}
+.editing{background:var(--card);padding:13px;border-left:3px solid var(--signal)}
+.edrow{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px}
+.ed{width:100%;border:1px solid var(--rule);padding:8px;font-size:14px;background:#fff;color:var(--ink);
+  font-family:'Barlow',sans-serif;margin-top:8px;outline:none}
+.edrow .ed{font-family:'IBM Plex Mono',monospace;margin-top:0;font-size:13px}
+.ed:focus{border-color:var(--ink)}
+.edlab{font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:.12em;font-size:10px;color:var(--mid);display:block}
+.pencil{background:none;border:none;color:var(--mid);cursor:pointer;padding:0 4px;font-size:13px}
 .daytype{display:flex;gap:4px;margin-bottom:18px}
 .dt{flex:1;padding:7px;border:1px solid var(--rule);background:transparent;color:var(--mid);
   font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:.1em;font-size:12px;font-weight:600;cursor:pointer}
@@ -209,6 +221,10 @@ button:focus-visible,textarea:focus-visible,input:focus-visible,select:focus-vis
 
   <!-- TODAY -->
   <div id="viewToday">
+    <div class="dayswitch">
+      <button class="ds" data-off="-1">Yesterday</button>
+      <button class="ds on" data-off="0">Today</button>
+    </div>
     <section class="card">
       <div class="daytype">
         <button class="dt" data-dt="rest">Rest</button>
@@ -270,6 +286,7 @@ var DT = {
 var MARK = { high:"●", medium:"◐", low:"○" };
 
 var S = null, KEY = null, view = "today", pending = null;
+var activeOffset = 0, editingId = null;
 
 /* ---------- helpers ---------- */
 function $(id){ return document.getElementById(id); }
@@ -295,18 +312,19 @@ function save(){
   try { localStorage.setItem(SKEY, JSON.stringify(S)); }
   catch(e){ showErr("Couldn't save to this device: " + e.message); }
 }
-function today(){
-  var k = dayKey(0);
+function activeKey(){ return dayKey(activeOffset); }
+function day(){
+  var k = activeKey();
   if (!S.logs[k]) S.logs[k] = { dayType:"normal", entries:[] };
   return S.logs[k];
 }
 function targets(){
-  var m = DT[today().dayType] || DT.normal;
+  var m = DT[day().dayType] || DT.normal;
   return { kcal:r(S.settings.kcal*m.kcal), protein:r(S.settings.protein),
            carbs:r(S.settings.carbs*m.carbs), fat:r(S.settings.fat) };
 }
 function totals(){
-  return today().entries.reduce(function(a,e){
+  return day().entries.reduce(function(a,e){
     a.kcal+=e.kcal||0; a.protein+=e.protein||0; a.carbs+=e.carbs||0; a.fat+=e.fat||0; return a;
   }, {kcal:0,protein:0,carbs:0,fat:0});
 }
@@ -325,7 +343,10 @@ function splitRow(label, val, tgt, unit, big){
 }
 
 function render(){
-  $("dateLabel").textContent = pretty(dayKey(0));
+  $("dateLabel").textContent = pretty(activeKey());
+  Array.prototype.forEach.call(document.querySelectorAll(".ds"), function(b){
+    b.classList.toggle("on", Number(b.dataset.off) === activeOffset);
+  });
 
   var t = totals(), g = targets();
   $("splits").innerHTML =
@@ -334,7 +355,7 @@ function render(){
     + splitRow("Carbs", t.carbs, g.carbs, "g")
     + splitRow("Fat", t.fat, g.fat, "g");
 
-  var dtNow = today().dayType;
+  var dtNow = day().dayType;
   Array.prototype.forEach.call(document.querySelectorAll(".dt"), function(b){
     b.classList.toggle("on", b.dataset.dt === dtNow);
   });
@@ -344,20 +365,39 @@ function render(){
     html += '<div class="entry pending"><div class="entry-top"><span class="mark">◌</span>'
          +  '<span class="nm">'+esc(pending)+'</span></div><div class="qty">Estimating…</div></div>';
   }
-  var list = today().entries.slice().reverse();
+  var list = day().entries.slice().reverse();
   for (var i=0;i<list.length;i++){
     var e = list[i];
+    if (e.id === editingId){
+      html += '<div class="editing">'
+        + '<span class="edlab">Item</span>'
+        + '<input class="ed" id="ed_name" value="'+esc(e.name)+'">'
+        + '<span class="edlab" style="margin-top:8px">Portion</span>'
+        + '<input class="ed" id="ed_qty" value="'+esc(e.qty)+'">'
+        + '<div class="edrow">'
+        + '<div><span class="edlab">kcal</span><input class="ed" id="ed_kcal" type="number" inputmode="numeric" value="'+e.kcal+'"></div>'
+        + '<div><span class="edlab">P</span><input class="ed" id="ed_protein" type="number" inputmode="numeric" value="'+e.protein+'"></div>'
+        + '<div><span class="edlab">C</span><input class="ed" id="ed_carbs" type="number" inputmode="numeric" value="'+e.carbs+'"></div>'
+        + '<div><span class="edlab">F</span><input class="ed" id="ed_fat" type="number" inputmode="numeric" value="'+e.fat+'"></div>'
+        + '</div>'
+        + '<div class="actions"><button class="btn" data-save="'+e.id+'">Save</button>'
+        + '<button class="btn ghost" data-canceledit="1">Cancel</button></div></div>';
+      continue;
+    }
     html += '<div class="entry"><div class="entry-top">'
       + '<span class="mark c-'+e.confidence+'">'+MARK[e.confidence]+'</span>'
       + '<span class="nm">'+esc(e.name)+'</span>'
       + '<span class="time">'+esc(e.ts)+'</span>'
+      + '<button class="pencil" data-edit="'+e.id+'" aria-label="Edit">edit</button>'
       + '<button class="x" data-del="'+e.id+'" aria-label="Remove">×</button></div>'
       + '<div class="qty">'+esc(e.qty)+(e.cached?'<span class="recall"> · recalled</span>':'')+'</div>'
       + (e.note ? '<div class="note">'+esc(e.note)+'</div>' : '')
       + '<div class="macros"><b>'+e.kcal+'</b><span>P'+e.protein+'</span><span>C'+e.carbs+'</span><span>F'+e.fat+'</span></div></div>';
   }
   if (!list.length && !pending){
-    html = '<div class="empty">Nothing logged yet. Type what you ate above — plain English, rough amounts are fine.</div>';
+    html = '<div class="empty">Nothing logged'
+      + (activeOffset ? ' for this day' : ' yet')
+      + '. Type what you ate above — plain English, rough amounts are fine.</div>';
   }
   $("entries").innerHTML = html;
 
@@ -389,17 +429,19 @@ function render(){
 
 /* ---------- logging ---------- */
 function addItems(items, cached){
-  var now = new Date().toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"});
-  var day = today();
+  var now = activeOffset === 0
+    ? new Date().toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})
+    : "—";
+  var d = day();
   items.forEach(function(it,i){
-    day.entries.push(Object.assign({}, it, { id:String(Date.now())+"-"+i, ts:now, cached:!!cached }));
+    d.entries.push(Object.assign({}, it, { id:String(Date.now())+"-"+i, ts:now, cached:!!cached }));
   });
   save(); render();
 }
 
 function buildPrompt(raw){
   var lib = Object.keys(S.library).slice(-40).map(function(k){ return {input:k, items:S.library[k]}; });
-  var y = (S.logs[dayKey(-1)] || {entries:[]}).entries.map(function(e){ return {name:e.name, qty:e.qty}; });
+  var y = (S.logs[dayKey(activeOffset-1)] || {entries:[]}).entries.map(function(e){ return {name:e.name, qty:e.qty}; });
   return [
 "You are a nutrition estimator for a serious amateur athlete in the UK. Return ONLY a JSON array. No markdown fences, no preamble, no explanation.",
 "",
@@ -558,7 +600,10 @@ $("restoreData").onclick = function(){
 
 $("logBtn").onclick = function(){ submit(false); };
 $("freshBtn").onclick = function(){ submit(true); };
-$("input").addEventListener("input", render);
+$("input").addEventListener("input", function(){
+  var cached = !!S.library[$("input").value.trim().toLowerCase()];
+  $("freshBtn").classList.toggle("hide", !cached || !!pending);
+});
 $("input").addEventListener("keydown", function(e){
   if (e.key === "Enter" && !e.shiftKey){ e.preventDefault(); submit(false); }
 });
@@ -566,12 +611,37 @@ $("input").addEventListener("keydown", function(e){
 document.addEventListener("click", function(e){
   var t = e.target;
   if (t.dataset && t.dataset.dt){
-    today().dayType = t.dataset.dt; save(); render();
+    day().dayType = t.dataset.dt; save(); render();
+  }
+  if (t.dataset && t.dataset.off){
+    activeOffset = Number(t.dataset.off);
+    editingId = null;
+    clearErr(); render();
   }
   if (t.dataset && t.dataset.del){
-    var day = today();
-    day.entries = day.entries.filter(function(x){ return x.id !== t.dataset.del; });
+    var d = day();
+    d.entries = d.entries.filter(function(x){ return x.id !== t.dataset.del; });
+    if (editingId === t.dataset.del) editingId = null;
     save(); render();
+  }
+  if (t.dataset && t.dataset.edit){
+    editingId = t.dataset.edit; render();
+  }
+  if (t.dataset && t.dataset.canceledit){
+    editingId = null; render();
+  }
+  if (t.dataset && t.dataset.save){
+    var ent = day().entries.filter(function(x){ return x.id === t.dataset.save; })[0];
+    if (ent){
+      ent.name = $("ed_name").value.trim() || ent.name;
+      ent.qty = $("ed_qty").value.trim();
+      ent.kcal = r($("ed_kcal").value);
+      ent.protein = r($("ed_protein").value);
+      ent.carbs = r($("ed_carbs").value);
+      ent.fat = r($("ed_fat").value);
+      ent.cached = false;
+    }
+    editingId = null; save(); render();
   }
   if (t.dataset && t.dataset.view){
     view = t.dataset.view;
