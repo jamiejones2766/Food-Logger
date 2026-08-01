@@ -264,6 +264,7 @@ button:focus-visible,textarea:focus-visible,input:focus-visible,select:focus-vis
         <button class="btn ghost cam" id="camBtn" aria-label="Photograph a label">Label photo</button>
       </div>
       <input id="camInput" type="file" accept="image/*" capture="environment" class="hide">
+      <p class="fine">Name it and give a portion first, then photograph the label — it remembers the name for next time.</p>
       <button class="relink hide" id="freshBtn">Logged this before — estimate fresh instead</button>
     </section>
 
@@ -522,10 +523,11 @@ function buildPrompt(raw, isLabel){
   var head = isLabel
     ? ["The image is a photograph of a food package — a nutrition table, ingredients panel, or the front of a pack.",
        "Read the printed figures directly. They are authoritative; never override them with your own estimate.",
+       "Read carefully. The print is small and the photo may be angled, curved, or lit unevenly. Zoom in mentally on the nutrition table and work through it row by row. Partial glare or a slight blur is normal — read what you can.",
        "Nutrition tables are usually per 100g and sometimes also per serving. Work out the figures for the portion actually eaten.",
        "If the user text below states a portion, use that. If it does not, use the pack's stated serving size, and if there is no serving size use 100g.",
-       "Set confidence to \"high\" — these are label figures.",
-       "If the image is too blurry or cropped to read the numbers, return exactly: []",
+       "If you can read the product name and some but not all of the figures, still return an item: use the figures you can read and estimate the remainder from your knowledge of that product, and say in note which numbers you estimated. Set confidence to \"medium\" in that case, otherwise \"high\".",
+       "Return an empty array ONLY if there is no legible text in the image at all.",
        ""].join("\n")
     : "";
   return head + [
@@ -557,7 +559,7 @@ JSON.stringify(y),
   ].join("\n");
 }
 
-function runParse(content, pendingLabel, cacheKey, restoreText){
+function runParse(content, pendingLabel, cacheKey, restoreText, modelOverride){
   pending = pendingLabel;
   $("logBtn").textContent = "Working it out…";
   $("logBtn").disabled = true;
@@ -573,7 +575,7 @@ function runParse(content, pendingLabel, cacheKey, restoreText){
       "anthropic-dangerous-direct-browser-access": "true"
     },
     body: JSON.stringify({
-      model: S.settings.model || DEFAULTS.settings.model,
+      model: modelOverride || S.settings.model || DEFAULTS.settings.model,
       max_tokens: 1200,
       messages: [{ role:"user", content: content }]
     })
@@ -589,7 +591,7 @@ function runParse(content, pendingLabel, cacheKey, restoreText){
       .trim();
     var items = JSON.parse(text);
     if (!Array.isArray(items)) throw new Error("Unexpected reply.");
-    if (!items.length) throw new Error("couldn't read the numbers on that. Try again with the nutrition table filling more of the frame.");
+    if (!items.length) throw new Error("no legible text in that image. Get closer to the nutrition table and make sure it's in focus.");
 
     var clean = items.map(function(it){
       var amt = Number(it.amount);
@@ -654,13 +656,15 @@ function prepImage(file){
       var img = new Image();
       img.onerror = function(){ reject(new Error("couldn't open that photo.")); };
       img.onload = function(){
-        var max = 1200;
+        var max = 1568;
         var s = Math.min(1, max / Math.max(img.width, img.height));
         var c = document.createElement("canvas");
         c.width = Math.round(img.width * s);
         c.height = Math.round(img.height * s);
-        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-        resolve(c.toDataURL("image/jpeg", 0.85).split(",")[1]);
+        var ctx = c.getContext("2d");
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL("image/jpeg", 0.92).split(",")[1]);
       };
       img.src = reader.result;
     };
@@ -672,13 +676,17 @@ function submitPhoto(file){
   if (pending) return;
   clearErr();
   var note = $("input").value.trim();
+  // Only use the typed text as a cache key if it actually names something.
+  // A bare "60g" would otherwise become a key that matches anything.
+  var named = (note.replace(/[^a-z]/gi, "").length >= 3);
+  var ck = named ? note.toLowerCase() : null;
   $("input").value = "";
   $("camBtn").disabled = true;
   prepImage(file).then(function(b64){
     runParse([
       { type:"image", source:{ type:"base64", media_type:"image/jpeg", data:b64 } },
       { type:"text", text: buildPrompt(note, true) }
-    ], note ? "Label photo — " + note : "Label photo", null, note);
+    ], note ? "Label photo — " + note : "Label photo", ck, note, "claude-sonnet-5");
   }).catch(function(err){
     pending = null;
     showErr("Couldn't use that photo: " + err.message);
