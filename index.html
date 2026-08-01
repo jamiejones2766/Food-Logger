@@ -80,6 +80,9 @@ body{
 .btn{padding:11px 16px;border:1px solid var(--ink);background:var(--ink);color:var(--card);
   font-family:'Barlow Condensed',sans-serif;text-transform:uppercase;letter-spacing:.14em;font-size:13px;font-weight:600;cursor:pointer}
 .btn.wide{width:100%;margin-top:4px;display:block}
+.inrow{display:flex;gap:6px;margin-top:4px}
+.btn.grow{flex:1}
+.btn.cam{flex:0 0 auto;white-space:nowrap}
 .btn.ghost{background:transparent;color:var(--ink)}
 .btn:disabled{opacity:.45;cursor:default}
 .relink{display:block;width:100%;margin-top:6px;background:none;border:none;font-family:'Barlow',sans-serif;
@@ -256,7 +259,11 @@ button:focus-visible,textarea:focus-visible,input:focus-visible,select:focus-vis
 
     <section>
       <textarea id="input" class="input" rows="2" placeholder="What did you eat?"></textarea>
-      <button class="btn wide" id="logBtn">Log it</button>
+      <div class="inrow">
+        <button class="btn grow" id="logBtn">Log it</button>
+        <button class="btn ghost cam" id="camBtn" aria-label="Photograph a label">Label photo</button>
+      </div>
+      <input id="camInput" type="file" accept="image/*" capture="environment" class="hide">
       <button class="relink hide" id="freshBtn">Logged this before — estimate fresh instead</button>
     </section>
 
@@ -509,10 +516,19 @@ function addItems(items, cached){
   save(); render();
 }
 
-function buildPrompt(raw){
+function buildPrompt(raw, isLabel){
   var lib = Object.keys(S.library).slice(-40).map(function(k){ return {input:k, items:S.library[k]}; });
   var y = (S.logs[dayKey(activeOffset-1)] || {entries:[]}).entries.map(function(e){ return {name:e.name, qty:e.qty}; });
-  return [
+  var head = isLabel
+    ? ["The image is a photograph of a food package — a nutrition table, ingredients panel, or the front of a pack.",
+       "Read the printed figures directly. They are authoritative; never override them with your own estimate.",
+       "Nutrition tables are usually per 100g and sometimes also per serving. Work out the figures for the portion actually eaten.",
+       "If the user text below states a portion, use that. If it does not, use the pack's stated serving size, and if there is no serving size use 100g.",
+       "Set confidence to \"high\" — these are label figures.",
+       "If the image is too blurry or cropped to read the numbers, return exactly: []",
+       ""].join("\n")
+    : "";
+  return head + [
 "You are a nutrition estimator for a serious amateur athlete in the UK. Return ONLY a JSON array. No markdown fences, no preamble, no explanation.",
 "",
 'Each element must be: {"name": string, "qty": string, "amount": number, "unit": string, "kcal": number, "protein": number, "carbs": number, "fat": number, "confidence": "high"|"medium"|"low", "note": string}',
@@ -541,22 +557,11 @@ JSON.stringify(y),
   ].join("\n");
 }
 
-function submit(fresh){
-  var raw = $("input").value.trim();
-  if (!raw || pending) return;
-  clearErr();
-  var ck = raw.toLowerCase();
-
-  if (!fresh && S.library[ck]){
-    $("input").value = "";
-    addItems(S.library[ck], true);
-    return;
-  }
-
-  pending = raw;
-  $("input").value = "";
+function runParse(content, pendingLabel, cacheKey, restoreText){
+  pending = pendingLabel;
   $("logBtn").textContent = "Working it out…";
   $("logBtn").disabled = true;
+  $("camBtn").disabled = true;
   render();
 
   fetch("https://api.anthropic.com/v1/messages", {
@@ -570,7 +575,7 @@ function submit(fresh){
     body: JSON.stringify({
       model: S.settings.model || DEFAULTS.settings.model,
       max_tokens: 1200,
-      messages: [{ role:"user", content: buildPrompt(raw) }]
+      messages: [{ role:"user", content: content }]
     })
   })
   .then(function(res){ return res.json(); })
@@ -583,7 +588,8 @@ function submit(fresh){
       .replace(/```json|```/g, "")
       .trim();
     var items = JSON.parse(text);
-    if (!Array.isArray(items) || !items.length) throw new Error("No items came back.");
+    if (!Array.isArray(items)) throw new Error("Unexpected reply.");
+    if (!items.length) throw new Error("couldn't read the numbers on that. Try again with the nutrition table filling more of the frame.");
 
     var clean = items.map(function(it){
       var amt = Number(it.amount);
@@ -604,21 +610,80 @@ function submit(fresh){
       return o;
     });
 
-    S.library[raw.toLowerCase()] = clean;
+    if (cacheKey) S.library[cacheKey] = clean;
     pending = null;
     addItems(clean, false);
   })
   .catch(function(e){
     pending = null;
-    $("input").value = raw;
+    if (restoreText) $("input").value = restoreText;
     showErr(/api key|authentication|401/i.test(e.message)
       ? "Your API key was rejected. Check it under Settings → Change key."
-      : 'Couldn\'t log "' + raw + '": ' + e.message);
+      : "Couldn't log that: " + e.message);
     render();
   })
   .then(function(){
     $("logBtn").textContent = "Log it";
     $("logBtn").disabled = false;
+    $("camBtn").disabled = false;
+  });
+}
+
+function submit(fresh){
+  var raw = $("input").value.trim();
+  if (!raw || pending) return;
+  clearErr();
+  var ck = raw.toLowerCase();
+
+  if (!fresh && S.library[ck]){
+    $("input").value = "";
+    addItems(S.library[ck], true);
+    return;
+  }
+  $("input").value = "";
+  runParse([{ type:"text", text: buildPrompt(raw) }], raw, ck, raw);
+}
+
+// iOS hands back HEIC from the camera, which the API won't accept, and a
+// full-resolution photo is needlessly expensive. Canvas fixes both.
+function prepImage(file){
+  return new Promise(function(resolve, reject){
+    var reader = new FileReader();
+    reader.onerror = function(){ reject(new Error("couldn't read that photo.")); };
+    reader.onload = function(){
+      var img = new Image();
+      img.onerror = function(){ reject(new Error("couldn't open that photo.")); };
+      img.onload = function(){
+        var max = 1200;
+        var s = Math.min(1, max / Math.max(img.width, img.height));
+        var c = document.createElement("canvas");
+        c.width = Math.round(img.width * s);
+        c.height = Math.round(img.height * s);
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL("image/jpeg", 0.85).split(",")[1]);
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function submitPhoto(file){
+  if (pending) return;
+  clearErr();
+  var note = $("input").value.trim();
+  $("input").value = "";
+  $("camBtn").disabled = true;
+  prepImage(file).then(function(b64){
+    runParse([
+      { type:"image", source:{ type:"base64", media_type:"image/jpeg", data:b64 } },
+      { type:"text", text: buildPrompt(note, true) }
+    ], note ? "Label photo — " + note : "Label photo", null, note);
+  }).catch(function(err){
+    pending = null;
+    showErr("Couldn't use that photo: " + err.message);
+    $("camBtn").disabled = false;
+    render();
   });
 }
 
@@ -745,6 +810,11 @@ $("copyWeek").onclick = function(){ doExport(7); };
 $("copyWeek14").onclick = function(){ doExport(14); };
 
 $("logBtn").onclick = function(){ submit(false); };
+$("camBtn").onclick = function(){ $("camInput").click(); };
+$("camInput").addEventListener("change", function(){
+  if (this.files && this.files[0]) submitPhoto(this.files[0]);
+  this.value = "";
+});
 $("freshBtn").onclick = function(){ submit(true); };
 $("input").addEventListener("input", function(){
   var cached = !!S.library[$("input").value.trim().toLowerCase()];
