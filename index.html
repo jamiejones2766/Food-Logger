@@ -89,8 +89,17 @@ body{
 .err{background:var(--card);border-left:3px solid var(--warn);padding:11px 13px;font-size:14px;margin-bottom:12px;color:var(--warn)}
 
 .entries{display:flex;flex-direction:column;gap:1px}
-.entry{background:var(--card);padding:11px 13px}
-.entry.pending{opacity:.6}
+.entry{background:var(--card)}
+.entry.pending{opacity:.6;padding:11px 13px}
+.erow{display:flex;align-items:center;gap:8px;padding:12px 13px;cursor:pointer;user-select:none}
+.chev{font-family:'IBM Plex Mono',monospace;font-size:15px;color:var(--mid);
+  transition:transform .18s ease;display:inline-block;width:10px}
+.chev.open{transform:rotate(90deg)}
+.kc{font-family:'IBM Plex Mono',monospace;font-size:14px;font-weight:600;
+  font-variant-numeric:tabular-nums;color:var(--ink)}
+.ebody{padding:0 13px 12px}
+.qtyrow{display:flex;align-items:baseline;gap:8px;margin-left:19px}
+.qtyrow .qty{flex:1;margin:0}
 .entry-top{display:flex;align-items:baseline;gap:8px}
 .mark{font-family:'IBM Plex Mono',monospace;font-size:13px}
 .c-high{color:var(--ink)} .c-medium{color:var(--signal)} .c-low{color:var(--warn)}
@@ -99,11 +108,11 @@ body{
 .x{background:none;border:none;font-size:19px;line-height:1;color:var(--mid);cursor:pointer;padding:0 2px}
 .qty{font-size:13px;color:var(--mid);margin:2px 0 0 21px}
 .recall{font-family:'IBM Plex Mono',monospace;font-size:11px}
-.note{font-size:12px;color:var(--warn);margin:3px 0 0 21px;font-style:italic}
+.note{font-size:12px;color:var(--warn);margin:3px 0 0 19px;font-style:italic}
 .macros{display:flex;gap:12px;margin:6px 0 0 21px;font-family:'IBM Plex Mono',monospace;
   font-size:13px;font-variant-numeric:tabular-nums;color:var(--mid)}
 .macros b{color:var(--ink);font-weight:600}
-.scaler{display:flex;align-items:center;gap:6px;margin:8px 0 0 21px;flex-wrap:wrap}
+.scaler{display:flex;align-items:center;gap:6px;margin:10px 0 0 19px;flex-wrap:wrap}
 .scaler .macros{margin:0 0 0 auto}
 .stp{width:30px;height:30px;border:1px solid var(--rule);background:transparent;color:var(--ink);
   font-family:'IBM Plex Mono',monospace;font-size:16px;line-height:1;cursor:pointer;padding:0}
@@ -303,7 +312,7 @@ var DT = {
 var MARK = { high:"●", medium:"◐", low:"○" };
 
 var S = null, KEY = null, view = "today", pending = null;
-var activeOffset = 0, editingId = null;
+var activeOffset = 0, editingId = null, expanded = {};
 
 /* ---------- helpers ---------- */
 function $(id){ return document.getElementById(id); }
@@ -427,21 +436,31 @@ function render(){
       continue;
     }
     ensureBase(e);
-    html += '<div class="entry"><div class="entry-top">'
+    var open = !!expanded[e.id];
+    html += '<div class="entry">'
+      + '<div class="erow" data-toggle="'+e.id+'">'
+      + '<span class="chev'+(open?" open":"")+'">›</span>'
       + '<span class="mark c-'+e.confidence+'">'+MARK[e.confidence]+'</span>'
       + '<span class="nm">'+esc(e.name)+'</span>'
-      + '<span class="time">'+esc(e.ts)+'</span>'
-      + '<button class="pencil" data-edit="'+e.id+'" aria-label="Edit">edit</button>'
-      + '<button class="x" data-del="'+e.id+'" aria-label="Remove">×</button></div>'
-      + '<div class="qty">'+esc(e.qty)+(e.cached?'<span class="recall"> · recalled</span>':'')+'</div>'
-      + (e.note ? '<div class="note">'+esc(e.note)+'</div>' : '')
-      + '<div class="scaler">'
-      + '<button class="stp" data-scale="'+e.id+'" data-dir="-1" aria-label="Less">–</button>'
-      + '<input class="amt" data-amt="'+e.id+'" type="number" inputmode="decimal" value="'+fmtAmt(e.amount)+'">'
-      + '<span class="unit">'+unitLabel(e.unit)+'</span>'
-      + '<button class="stp" data-scale="'+e.id+'" data-dir="1" aria-label="More">+</button>'
-      + '<span class="macros"><b>'+e.kcal+'</b><span>P'+e.protein+'</span><span>C'+e.carbs+'</span><span>F'+e.fat+'</span></span>'
-      + '</div></div>';
+      + '<span class="kc">'+e.kcal+'</span>'
+      + '</div>';
+    if (open){
+      html += '<div class="ebody">'
+        + '<div class="qtyrow"><span class="qty">'+esc(e.qty)
+        + (e.cached?'<span class="recall"> · recalled</span>':'')+'</span>'
+        + '<span class="time">'+esc(e.ts)+'</span>'
+        + '<button class="pencil" data-edit="'+e.id+'" aria-label="Edit">edit</button>'
+        + '<button class="x" data-del="'+e.id+'" aria-label="Remove">×</button></div>'
+        + (e.note ? '<div class="note">'+esc(e.note)+'</div>' : '')
+        + '<div class="scaler">'
+        + '<button class="stp" data-scale="'+e.id+'" data-dir="-1" aria-label="Less">–</button>'
+        + '<input class="amt" data-amt="'+e.id+'" type="number" inputmode="decimal" value="'+fmtAmt(e.amount)+'">'
+        + '<span class="unit">'+unitLabel(e.unit)+'</span>'
+        + '<button class="stp" data-scale="'+e.id+'" data-dir="1" aria-label="More">+</button>'
+        + '<span class="macros"><b>'+e.kcal+'</b><span>P'+e.protein+'</span><span>C'+e.carbs+'</span><span>F'+e.fat+'</span></span>'
+        + '</div></div>';
+    }
+    html += '</div>';
   }
   if (!list.length && !pending){
     html = '<div class="empty">Nothing logged'
@@ -483,7 +502,9 @@ function addItems(items, cached){
     : "—";
   var d = day();
   items.forEach(function(it,i){
-    d.entries.push(Object.assign({}, it, { id:String(Date.now())+"-"+i, ts:now, cached:!!cached }));
+    var id = String(Date.now())+"-"+i;
+    expanded[id] = true;
+    d.entries.push(Object.assign({}, it, { id:id, ts:now, cached:!!cached }));
   });
   save(); render();
 }
@@ -501,6 +522,9 @@ function buildPrompt(raw){
 '- "amount" and "unit" are the single primary quantity, as a number plus one of "g", "ml", or "" for countable things. 60 + "g" for oats. 250 + "ml" for milk. 2 + "" for two eggs.',
 '- "qty" is the human-readable portion, e.g. "60g rolled oats" or "2 large eggs". It should agree with amount and unit.',
 "- The macros must correspond exactly to that amount, so that halving the amount would halve the macros.",
+"- If the user states any figure themselves — calories, a macro, a percentage, a brand, a pack size — treat it as authoritative and fit everything else around it. They are reading a label and you are not. Do NOT alter the stated amount to make your own estimate work.",
+"- Keep macros arithmetically consistent with the calorie figure at 4 kcal/g protein, 4 kcal/g carbs, 9 kcal/g fat, within about 5%. If the user gave the calories, adjust the macro split to reconcile, not the calories.",
+"- When the user supplies label figures, set confidence to \"high\".",
 '- "note" is a short flag ONLY when you made a meaningful assumption or estimated high. Otherwise "".',
 '- confidence: "high" = packaged/labelled item or plain whole food. "medium" = home-cooked with known ingredients. "low" = restaurant, takeaway or unknown preparation.',
 "- For restaurant and takeaway food estimate on the HIGH side (assume generous oil and butter) and say so in note.",
@@ -740,6 +764,15 @@ document.addEventListener("change", function(e){
 
 document.addEventListener("click", function(e){
   var t = e.target;
+  if (t.closest){
+    var row = t.closest("[data-toggle]");
+    if (row){
+      var id = row.dataset.toggle;
+      if (expanded[id]) delete expanded[id]; else expanded[id] = true;
+      render();
+      return;
+    }
+  }
   if (t.dataset && t.dataset.dt){
     day().dayType = t.dataset.dt; save(); render();
   }
