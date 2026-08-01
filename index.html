@@ -103,6 +103,17 @@ body{
 .macros{display:flex;gap:12px;margin:6px 0 0 21px;font-family:'IBM Plex Mono',monospace;
   font-size:13px;font-variant-numeric:tabular-nums;color:var(--mid)}
 .macros b{color:var(--ink);font-weight:600}
+.scaler{display:flex;align-items:center;gap:6px;margin:8px 0 0 21px;flex-wrap:wrap}
+.scaler .macros{margin:0 0 0 auto}
+.stp{width:30px;height:30px;border:1px solid var(--rule);background:transparent;color:var(--ink);
+  font-family:'IBM Plex Mono',monospace;font-size:16px;line-height:1;cursor:pointer;padding:0}
+.stp:active{background:rgba(21,24,15,.08)}
+.amt{width:56px;border:1px solid var(--rule);background:#fff;color:var(--ink);padding:5px 6px;
+  font-family:'IBM Plex Mono',monospace;font-size:14px;text-align:center;outline:none;
+  font-variant-numeric:tabular-nums;-moz-appearance:textfield}
+.amt::-webkit-outer-spin-button,.amt::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.amt:focus{border-color:var(--ink)}
+.unit{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--mid);min-width:16px}
 .empty{background:var(--card);padding:22px 14px;font-size:14px;color:var(--mid)}
 .legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:14px;font-size:11px;color:rgba(21,24,15,.6)}
 .legend i{font-style:normal;font-family:'IBM Plex Mono',monospace}
@@ -331,6 +342,31 @@ function totals(){
 function showErr(msg){ var el=$("err"); el.textContent=msg; el.classList.remove("hide"); }
 function clearErr(){ $("err").classList.add("hide"); }
 
+// Entries logged before portion scaling existed have no base snapshot.
+function ensureBase(e){
+  if (!e.base){
+    if (!isFinite(e.amount) || e.amount <= 0){ e.amount = 1; e.unit = e.unit || ""; }
+    e.base = { amount:e.amount, kcal:e.kcal, protein:e.protein, carbs:e.carbs, fat:e.fat };
+  }
+  return e;
+}
+function stepFor(unit){ return unit === "g" ? 10 : unit === "ml" ? 25 : 1; }
+function fmtAmt(n){ return Math.round(n) === n ? String(n) : String(Math.round(n*10)/10); }
+function unitLabel(u){ return u === "" ? "×" : u; }
+
+function scaleTo(e, amount){
+  ensureBase(e);
+  var min = e.unit === "" ? 0.5 : 1;
+  if (!isFinite(amount) || amount < min) amount = min;
+  var f = amount / e.base.amount;
+  e.amount = amount;
+  e.kcal = r(e.base.kcal * f);
+  e.protein = r(e.base.protein * f);
+  e.carbs = r(e.base.carbs * f);
+  e.fat = r(e.base.fat * f);
+  if (amount !== e.base.amount) e.cached = false;
+}
+
 /* ---------- render ---------- */
 function splitRow(label, val, tgt, unit, big){
   var pct = Math.min((val / (tgt*1.4 || 1)) * 100, 100);
@@ -384,6 +420,7 @@ function render(){
         + '<button class="btn ghost" data-canceledit="1">Cancel</button></div></div>';
       continue;
     }
+    ensureBase(e);
     html += '<div class="entry"><div class="entry-top">'
       + '<span class="mark c-'+e.confidence+'">'+MARK[e.confidence]+'</span>'
       + '<span class="nm">'+esc(e.name)+'</span>'
@@ -392,7 +429,13 @@ function render(){
       + '<button class="x" data-del="'+e.id+'" aria-label="Remove">×</button></div>'
       + '<div class="qty">'+esc(e.qty)+(e.cached?'<span class="recall"> · recalled</span>':'')+'</div>'
       + (e.note ? '<div class="note">'+esc(e.note)+'</div>' : '')
-      + '<div class="macros"><b>'+e.kcal+'</b><span>P'+e.protein+'</span><span>C'+e.carbs+'</span><span>F'+e.fat+'</span></div></div>';
+      + '<div class="scaler">'
+      + '<button class="stp" data-scale="'+e.id+'" data-dir="-1" aria-label="Less">–</button>'
+      + '<input class="amt" data-amt="'+e.id+'" type="number" inputmode="decimal" value="'+fmtAmt(e.amount)+'">'
+      + '<span class="unit">'+unitLabel(e.unit)+'</span>'
+      + '<button class="stp" data-scale="'+e.id+'" data-dir="1" aria-label="More">+</button>'
+      + '<span class="macros"><b>'+e.kcal+'</b><span>P'+e.protein+'</span><span>C'+e.carbs+'</span><span>F'+e.fat+'</span></span>'
+      + '</div></div>';
   }
   if (!list.length && !pending){
     html = '<div class="empty">Nothing logged'
@@ -445,11 +488,13 @@ function buildPrompt(raw){
   return [
 "You are a nutrition estimator for a serious amateur athlete in the UK. Return ONLY a JSON array. No markdown fences, no preamble, no explanation.",
 "",
-'Each element must be: {"name": string, "qty": string, "kcal": number, "protein": number, "carbs": number, "fat": number, "confidence": "high"|"medium"|"low", "note": string}',
+'Each element must be: {"name": string, "qty": string, "amount": number, "unit": string, "kcal": number, "protein": number, "carbs": number, "fat": number, "confidence": "high"|"medium"|"low", "note": string}',
 "",
 "Rules:",
-"- Split the input into separate items where sensible (a meal with three components = three elements).",
-'- "qty" is the portion you assumed, stated concretely (e.g. "60g oats, 250ml semi-skimmed milk"). Never leave it vague.',
+"- Split the input into separate items so each element has ONE primary quantity. A meal with three components = three elements. Never combine two different foods into one element.",
+'- "amount" and "unit" are the single primary quantity, as a number plus one of "g", "ml", or "" for countable things. 60 + "g" for oats. 250 + "ml" for milk. 2 + "" for two eggs.',
+'- "qty" is the human-readable portion, e.g. "60g rolled oats" or "2 large eggs". It should agree with amount and unit.',
+"- The macros must correspond exactly to that amount, so that halving the amount would halve the macros.",
 '- "note" is a short flag ONLY when you made a meaningful assumption or estimated high. Otherwise "".',
 '- confidence: "high" = packaged/labelled item or plain whole food. "medium" = home-cooked with known ingredients. "low" = restaurant, takeaway or unknown preparation.',
 "- For restaurant and takeaway food estimate on the HIGH side (assume generous oil and butter) and say so in note.",
@@ -511,13 +556,22 @@ function submit(fresh){
     if (!Array.isArray(items) || !items.length) throw new Error("No items came back.");
 
     var clean = items.map(function(it){
-      return {
+      var amt = Number(it.amount);
+      if (!isFinite(amt) || amt <= 0) amt = 1;
+      var u = String(it.unit == null ? "" : it.unit).trim();
+      if (["g","ml"].indexOf(u) === -1) u = "";
+      var o = {
         name: String(it.name || "Unnamed"),
         qty: String(it.qty || ""),
+        amount: amt, unit: u,
         kcal: r(it.kcal), protein: r(it.protein), carbs: r(it.carbs), fat: r(it.fat),
         confidence: MARK[it.confidence] ? it.confidence : "medium",
         note: String(it.note || "")
       };
+      // Every scale recomputes from this snapshot, so repeated nudges
+      // don't accumulate rounding error.
+      o.base = { amount:amt, kcal:o.kcal, protein:o.protein, carbs:o.carbs, fat:o.fat };
+      return o;
     });
 
     S.library[raw.toLowerCase()] = clean;
@@ -608,6 +662,14 @@ $("input").addEventListener("keydown", function(e){
   if (e.key === "Enter" && !e.shiftKey){ e.preventDefault(); submit(false); }
 });
 
+document.addEventListener("change", function(e){
+  var t = e.target;
+  if (t.dataset && t.dataset.amt){
+    var ae = day().entries.filter(function(x){ return x.id === t.dataset.amt; })[0];
+    if (ae){ scaleTo(ae, Number(t.value)); save(); render(); }
+  }
+});
+
 document.addEventListener("click", function(e){
   var t = e.target;
   if (t.dataset && t.dataset.dt){
@@ -623,6 +685,14 @@ document.addEventListener("click", function(e){
     d.entries = d.entries.filter(function(x){ return x.id !== t.dataset.del; });
     if (editingId === t.dataset.del) editingId = null;
     save(); render();
+  }
+  if (t.dataset && t.dataset.scale){
+    var se = day().entries.filter(function(x){ return x.id === t.dataset.scale; })[0];
+    if (se){
+      ensureBase(se);
+      scaleTo(se, se.amount + stepFor(se.unit) * Number(t.dataset.dir));
+      save(); render();
+    }
   }
   if (t.dataset && t.dataset.edit){
     editingId = t.dataset.edit; render();
@@ -640,6 +710,9 @@ document.addEventListener("click", function(e){
       ent.carbs = r($("ed_carbs").value);
       ent.fat = r($("ed_fat").value);
       ent.cached = false;
+      // Hand-edited numbers become the new reference for scaling.
+      ent.base = { amount:ent.amount || 1, kcal:ent.kcal, protein:ent.protein,
+                   carbs:ent.carbs, fat:ent.fat };
     }
     editingId = null; save(); render();
   }
