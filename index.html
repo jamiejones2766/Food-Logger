@@ -203,6 +203,7 @@ button:focus-visible,textarea:focus-visible,input:focus-visible,select:focus-vis
     <div class="tabs">
       <button class="tab on" data-view="today">Today</button>
       <button class="tab" data-view="week">Week</button>
+      <button class="tab" data-view="foods">Foods</button>
     </div>
   </header>
 
@@ -313,6 +314,16 @@ button:focus-visible,textarea:focus-visible,input:focus-visible,select:focus-vis
       <p class="fine" id="weekHint" style="display:none">Copied. Paste it into Claude and ask for a review.</p>
     </section>
   </div>
+
+  <!-- FOODS -->
+  <div id="viewFoods" class="hide">
+    <section class="card">
+      <div class="eyebrow">Stored foods</div>
+      <p class="fine" id="foodsHint">These are the exact phrases you have typed before. Typing one of them again is free — it never calls the AI. Anything else costs a call.</p>
+      <input class="input" id="foodSearch" placeholder="Search stored foods" autocapitalize="off" spellcheck="false">
+      <div id="foodsList"></div>
+    </section>
+  </div>
 </div>
 
 <script>
@@ -324,6 +335,7 @@ var KKEY = "foodlog.key.v1";
 var DEFAULTS = {
   settings: { weight:80, kcal:2600, protein:170, carbs:280, fat:80, model:"claude-haiku-4-5-20251001" },
   library: {},
+  libraryUses: {},
   logs: {},
   synced: {}
 };
@@ -695,7 +707,7 @@ function runParse(content, pendingLabel, cacheKey, restoreText, modelOverride){
       return o;
     });
 
-    if (cacheKey) S.library[cacheKey] = clean;
+    if (cacheKey){ S.library[cacheKey] = clean; bumpUse(cacheKey); }
     pending = null;
     addItems(clean, false);
   })
@@ -722,6 +734,7 @@ function submit(fresh){
 
   if (!fresh && S.library[ck]){
     $("input").value = "";
+    bumpUse(ck);
     addItems(S.library[ck], true);
     return;
   }
@@ -815,6 +828,44 @@ $("saveKey").onclick = function(){
 };
 
 $("openSettings").onclick = function(){ fillSettings(); setSyncLine(); $("settings").classList.remove("hide"); };
+$("foodSearch").addEventListener("input", function(){
+  foodFilter = this.value.trim();
+  renderFoods();
+});
+
+$("foodsList").addEventListener("click", function(ev){
+  var t = ev.target.closest ? ev.target.closest("button") : null;
+  if (!t) return;
+  var d = t.dataset;
+
+  if (d.fcancel){ foodEditing = null; foodSource = null; renderFoods(); return; }
+  if (d.fedit){ foodEditing = d.fedit; foodSource = null; renderFoods(); return; }
+  if (d.fcopy){ foodSource = d.fcopy; foodEditing = null; renderFoods(); return; }
+
+  if (d.fpaste){
+    var src = S.library[foodSource];
+    if (src){
+      S.library[d.fpaste] = JSON.parse(JSON.stringify(src));
+      save();
+    }
+    foodSource = null;
+    renderFoods();
+    return;
+  }
+
+  if (d.fdel){
+    if (!confirm('Delete "' + d.fdel + '"?\n\nTyping that phrase again will cost an AI call. Days already logged are not affected.')) return;
+    delete S.library[d.fdel];
+    if (S.libraryUses) delete S.libraryUses[d.fdel];
+    if (foodEditing === d.fdel) foodEditing = null;
+    if (foodSource === d.fdel) foodSource = null;
+    save(); renderFoods();
+    return;
+  }
+
+  if (d.fsave){ saveFoodEdit(d.fsave); return; }
+});
+
 $("syncNow").onclick = function(){ syncFoodDays(true); };
 $("saveSync").onclick = function(){
   var o = $("f_owner").value.trim(), rp = $("f_repo").value.trim(), tk = $("f_token").value.trim();
@@ -856,6 +907,126 @@ $("restoreData").onclick = function(){
     save(); $("dataPanel").classList.add("hide"); render();
   } catch(e){ alert("That isn't valid log data."); }
 };
+
+/* ── stored foods ─────────────────────────────────────────────
+   S.library is keyed on the exact lowercased phrase typed into
+   the box. A hit skips the AI call entirely, so this list is
+   both the cache and the thing that decides what costs money.
+   Use counts live in a parallel map so the library shape stays
+   exactly as it was — nothing to migrate. ──────────────────── */
+var foodEditing = null, foodSource = null, foodFilter = "";
+
+function bumpUse(k){
+  if (!S.libraryUses) S.libraryUses = {};
+  S.libraryUses[k] = (S.libraryUses[k] || 0) + 1;
+  save();
+}
+function uses(k){ return (S.libraryUses && S.libraryUses[k]) || 0; }
+
+function libSum(items){
+  return items.reduce(function(a,e){
+    a.kcal+=e.kcal||0; a.protein+=e.protein||0; a.carbs+=e.carbs||0; a.fat+=e.fat||0; return a;
+  }, {kcal:0,protein:0,carbs:0,fat:0});
+}
+
+function foodKeys(){
+  var f = foodFilter.toLowerCase();
+  return Object.keys(S.library)
+    .filter(function(k){ return !f || k.indexOf(f) !== -1; })
+    .sort(function(a,b){
+      var d = uses(b) - uses(a);
+      return d !== 0 ? d : (a < b ? -1 : 1);
+    });
+}
+
+function renderFoods(){
+  var box = $("foodsList");
+  if (!box) return;
+  var keys = foodKeys();
+  var total = Object.keys(S.library).length;
+
+  var hint = $("foodsHint");
+  if (hint){
+    hint = "These are the exact phrases you have typed before. Typing one again is free — it never calls the AI. Anything else costs a call. "
+         + total + " stored"
+         + (total > 40 ? ". Only the 40 most recent feed the AI as examples; the rest still work as exact matches." : ".");
+    $("foodsHint").textContent = hint;
+  }
+
+  if (!keys.length){
+    box.innerHTML = '<p class="fine">'
+      + (foodFilter ? "Nothing matching that." : "Nothing stored yet. Anything you log gets remembered.")
+      + '</p>';
+    return;
+  }
+
+  var html = "";
+  if (foodSource){
+    html += '<div class="warnbox">Copying values from <b>' + esc(foodSource) + '</b>. '
+         +  'Tap <b>Paste here</b> on the entry you want to fix. '
+         +  '<button class="btn ghost" data-fcancel="1">Cancel</button></div>';
+  }
+
+  keys.forEach(function(k){
+    var items = S.library[k], t = libSum(items), n = uses(k);
+
+    if (k === foodEditing){
+      html += '<div class="editing"><span class="edlab">Typed phrase</span>'
+           +  '<div class="fine">' + esc(k) + '</div>';
+      items.forEach(function(it, i){
+        html += '<span class="edlab" style="margin-top:8px">Item ' + (i+1) + '</span>'
+             +  '<input class="ed" id="fe_name_' + i + '" value="' + esc(it.name) + '">'
+             +  '<div class="edrow">'
+             +  '<div><span class="edlab">kcal</span><input class="ed" id="fe_kcal_' + i + '" type="number" inputmode="numeric" value="' + (it.kcal||0) + '"></div>'
+             +  '<div><span class="edlab">P</span><input class="ed" id="fe_p_' + i + '" type="number" inputmode="numeric" value="' + (it.protein||0) + '"></div>'
+             +  '<div><span class="edlab">C</span><input class="ed" id="fe_c_' + i + '" type="number" inputmode="numeric" value="' + (it.carbs||0) + '"></div>'
+             +  '<div><span class="edlab">F</span><input class="ed" id="fe_f_' + i + '" type="number" inputmode="numeric" value="' + (it.fat||0) + '"></div>'
+             +  '</div>';
+      });
+      html += '<div class="actions">'
+           +  '<button class="btn" data-fsave="' + esc(k) + '">Save</button>'
+           +  '<button class="btn ghost" data-fcancel="1">Cancel</button>'
+           +  '</div></div>';
+      return;
+    }
+
+    html += '<div class="entry"><div class="entry-top">'
+         +  '<span class="nm">' + esc(items.map(function(i){ return i.name; }).join(", ")) + '</span>'
+         +  '<span class="kc">' + t.kcal + '</span></div>'
+         +  '<div class="qty">' + esc(k) + '</div>'
+         +  '<div class="qty">' + t.protein + 'P ' + t.carbs + 'C ' + t.fat + 'F'
+         +  ' · used ' + n + (n === 1 ? " time" : " times") + '</div>'
+         +  '<div class="actions">'
+         +  '<button class="btn ghost" data-fedit="' + esc(k) + '">Edit</button>'
+         +  (foodSource && foodSource !== k
+              ? '<button class="btn ghost" data-fpaste="' + esc(k) + '">Paste here</button>'
+              : '<button class="btn ghost" data-fcopy="' + esc(k) + '">Copy values</button>')
+         +  '<button class="btn ghost" data-fdel="' + esc(k) + '">Delete</button>'
+         +  '</div></div>';
+  });
+
+  box.innerHTML = html;
+}
+
+function saveFoodEdit(k){
+  var items = S.library[k];
+  if (!items) return;
+  items.forEach(function(it, i){
+    var nm = $("fe_name_" + i);
+    if (!nm) return;
+    it.name = nm.value.trim() || it.name;
+    it.kcal = r($("fe_kcal_" + i).value);
+    it.protein = r($("fe_p_" + i).value);
+    it.carbs = r($("fe_c_" + i).value);
+    it.fat = r($("fe_f_" + i).value);
+    // base is what portion scaling multiplies from, so it has to
+    // move with the corrected numbers or the next nudge undoes them.
+    it.base = { amount: (it.base && it.base.amount) || it.amount || 1,
+                kcal: it.kcal, protein: it.protein, carbs: it.carbs, fat: it.fat };
+  });
+  foodEditing = null;
+  save(); renderFoods();
+}
 
 /* ── GitHub backup ────────────────────────────────────────────
    Reuses the session app's token: both apps sit on the same
@@ -1146,6 +1317,8 @@ document.addEventListener("click", function(e){
     });
     $("viewToday").classList.toggle("hide", view !== "today");
     $("viewWeek").classList.toggle("hide", view !== "week");
+    $("viewFoods").classList.toggle("hide", view !== "foods");
+    if (view === "foods") renderFoods();
   }
 });
 
