@@ -654,7 +654,7 @@ JSON.stringify(y),
   ].join("\n");
 }
 
-function runParse(content, pendingLabel, cacheKey, restoreText, modelOverride){
+function runParse(content, pendingLabel, cacheKey, restoreText, modelOverride, onDone, onFail){
   pending = pendingLabel;
   $("logBtn").textContent = "Working it out…";
   $("logBtn").disabled = true;
@@ -710,10 +710,12 @@ function runParse(content, pendingLabel, cacheKey, restoreText, modelOverride){
     if (cacheKey){ S.library[cacheKey] = clean; bumpUse(cacheKey); }
     pending = null;
     addItems(clean, false);
+    if (onDone) onDone();
   })
   .catch(function(e){
     pending = null;
-    if (restoreText) $("input").value = restoreText;
+    if (onFail) onFail();
+    else if (restoreText) $("input").value = restoreText;
     showErr(/api key|authentication|401/i.test(e.message)
       ? "Your API key was rejected. Check it under Settings → Change key."
       : "Couldn't log that: " + e.message);
@@ -726,20 +728,46 @@ function runParse(content, pendingLabel, cacheKey, restoreText, modelOverride){
   });
 }
 
+/* One line, one stored phrase. Typing two foods together cached the
+   whole blob under a single key, which only hit again if you retyped
+   both in the same order — so it never did. Cached lines resolve
+   instantly; misses go to the AI one at a time so each gets its own
+   reusable key. */
 function submit(fresh){
   var raw = $("input").value.trim();
   if (!raw || pending) return;
   clearErr();
-  var ck = raw.toLowerCase();
 
-  if (!fresh && S.library[ck]){
-    $("input").value = "";
-    bumpUse(ck);
-    addItems(S.library[ck], true);
-    return;
-  }
+  var lines = raw.split(/\n+/).map(function(s){ return s.trim(); })
+                 .filter(function(s){ return s.length; });
+  if (!lines.length) return;
   $("input").value = "";
-  runParse([{ type:"text", text: buildPrompt(raw) }], raw, ck, raw);
+
+  var queue = [];
+  lines.forEach(function(line){
+    var ck = line.toLowerCase();
+    if (!fresh && S.library[ck]){ bumpUse(ck); addItems(S.library[ck], true); }
+    else queue.push(line);
+  });
+
+  if (queue.length) runQueue(queue, 0, queue.length);
+}
+
+function runQueue(q, done, total){
+  if (!q.length) return;
+  var line = q.shift();
+  var ck = line.toLowerCase();
+  var label = total > 1 ? line + "  (" + (done+1) + " of " + total + ")" : line;
+  runParse(
+    [{ type:"text", text: buildPrompt(line) }],
+    label, ck, line, null,
+    function(){ runQueue(q, done+1, total); },
+    function(){
+      // Stop rather than firing the rest at a dead key or a dropped
+      // connection. Everything unprocessed goes back in the box.
+      $("input").value = [line].concat(q).join("\n");
+    }
+  );
 }
 
 // iOS hands back HEIC from the camera, which the API won't accept, and a
