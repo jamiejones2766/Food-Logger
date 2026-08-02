@@ -223,6 +223,14 @@ button:focus-visible,textarea:focus-visible,input:focus-visible,select:focus-vis
       </label>
     </div>
     <p class="fine">Normal-day numbers. Rest and hard days scale calories and carbs from here; protein and fat stay put.</p>
+
+    <div class="eyebrow" style="margin-top:16px">Backup</div>
+    <p class="fine">Closed days are written to the session repo, one file per day. Uses the GitHub token already set in the session app. The repo is public, so backed-up days are publicly visible.</p>
+    <p class="fine" id="syncLine">—</p>
+    <div class="actions">
+      <button class="btn ghost" id="syncNow">Back up now</button>
+    </div>
+
     <div class="actions">
       <button class="btn" id="saveSettings">Save</button>
       <button class="btn ghost" id="closeSettings">Cancel</button>
@@ -310,7 +318,8 @@ var KKEY = "foodlog.key.v1";
 var DEFAULTS = {
   settings: { weight:80, kcal:2600, protein:170, carbs:280, fat:80, model:"claude-haiku-4-5-20251001" },
   library: {},
-  logs: {}
+  logs: {},
+  synced: {}
 };
 
 var DT = {
@@ -775,14 +784,16 @@ function fillSettings(){
 
 function startApp(){
   S = load();
+  if (!S.synced) S.synced = {};
   $("setup").classList.add("hide");
   $("app").classList.remove("hide");
   render();
   applyFuelSource();
+  syncFoodDays(false);
 }
 
 document.addEventListener("visibilitychange", function(){
-  if (!document.hidden && S) applyFuelSource();
+  if (!document.hidden && S){ applyFuelSource(); syncFoodDays(false); }
 });
 
 $("saveKey").onclick = function(){
@@ -793,7 +804,8 @@ $("saveKey").onclick = function(){
   startApp();
 };
 
-$("openSettings").onclick = function(){ fillSettings(); $("settings").classList.remove("hide"); };
+$("openSettings").onclick = function(){ fillSettings(); setSyncLine(); $("settings").classList.remove("hide"); };
+$("syncNow").onclick = function(){ syncFoodDays(true); };
 $("closeSettings").onclick = function(){ $("settings").classList.add("hide"); };
 $("saveSettings").onclick = function(){
   S.settings = {
@@ -827,6 +839,123 @@ $("restoreData").onclick = function(){
     save(); $("dataPanel").classList.add("hide"); render();
   } catch(e){ alert("That isn't valid log data."); }
 };
+
+/* ── GitHub backup ────────────────────────────────────────────
+   Reuses the session app's token: both apps sit on the same
+   github.io origin, so they share one localStorage. Only days
+   that have closed get written, each to its own path, so there
+   is no SHA fetch and nothing to merge. ─────────────────────── */
+var SYNC_CFG = "jj-sync-cfg";
+var syncMsg = "";
+
+function syncCfg(){
+  try {
+    var raw = localStorage.getItem(SYNC_CFG);
+    if (raw){
+      var c = JSON.parse(raw);
+      if (c && c.owner && c.repo && c.token) return c;
+    }
+  } catch(e){}
+  return null;
+}
+
+function b64(str){
+  return btoa(unescape(encodeURIComponent(str)));
+}
+
+// The library rides along with every day file, so the most recent
+// file on the remote is a complete restore point on its own.
+function daySnapshot(k){
+  var rec = S.logs[k];
+  var t = rec.entries.reduce(function(a,e){
+    a.kcal+=e.kcal||0; a.protein+=e.protein||0; a.carbs+=e.carbs||0; a.fat+=e.fat||0; return a;
+  }, {kcal:0,protein:0,carbs:0,fat:0});
+  var m = DT[rec.dayType] || DT.normal;
+  return {
+    date: k,
+    dayType: rec.dayType,
+    dayTypeWhy: rec.dayTypeWhy || "",
+    dayTypeManual: !!rec.dayTypeManual,
+    targets: { kcal:r(S.settings.kcal*m.kcal), protein:S.settings.protein,
+               carbs:r(S.settings.carbs*m.carbs), fat:S.settings.fat },
+    totals: t,
+    entries: rec.entries,
+    settings: S.settings,
+    library: S.library,
+    written: new Date().toISOString(),
+    restoreHint: "entries are this day only; settings and library are a snapshot of the whole app at write time"
+  };
+}
+
+function pushDay(k, cfg){
+  var path = "data/food/" + k + ".json";
+  var body = {
+    message: "food log " + k,
+    content: b64(JSON.stringify(daySnapshot(k), null, 1))
+  };
+  return fetch("https://api.github.com/repos/" + cfg.owner + "/" + cfg.repo + "/contents/" + path, {
+    method: "PUT",
+    headers: { Authorization: "Bearer " + cfg.token, Accept: "application/vnd.github+json" },
+    body: JSON.stringify(body)
+  }).then(function(res){
+    if (res.ok) return { ok:true };
+    // 422 = already on the remote. The write landed, the local flag
+    // never flipped. Treat as done rather than retrying forever.
+    if (res.status === 422) return { ok:true };
+    var hint = res.status === 401 ? " (token expired or invalid)"
+      : res.status === 403 ? " (token lacks Contents write)"
+      : res.status === 404 ? " (token not granted to " + cfg.owner + "/" + cfg.repo + ")" : "";
+    return { ok:false, why:"HTTP " + res.status + hint };
+  }).catch(function(e){
+    return { ok:false, why:"network: " + (e.message || "offline") };
+  });
+}
+
+function setSyncLine(){
+  var el = $("syncLine");
+  if (el) el.textContent = syncMsg || "—";
+}
+
+function syncFoodDays(manual){
+  if (!S.synced) S.synced = {};
+  var cfg = syncCfg();
+  if (!cfg){
+    syncMsg = "No GitHub token found. Set one in the session app under Settings.";
+    setSyncLine(); return;
+  }
+  var today = dayKey(0);
+  var due = Object.keys(S.logs).filter(function(k){
+    var rec = S.logs[k];
+    return k < today && rec && rec.entries && rec.entries.length && !S.synced[k];
+  }).sort();
+
+  if (!due.length){
+    syncMsg = manual ? "Nothing waiting — every closed day is backed up." : syncMsg;
+    setSyncLine(); return;
+  }
+
+  syncMsg = "Backing up " + due.length + " day" + (due.length > 1 ? "s" : "") + "…";
+  setSyncLine();
+
+  var i = 0, done = 0, fails = [];
+  function next(){
+    if (i >= due.length){
+      save();
+      syncMsg = fails.length
+        ? "Backed up " + done + " of " + due.length + ". Failed: " + fails[0]
+        : "Backed up " + done + " day" + (done > 1 ? "s" : "") + " to " + cfg.owner + "/" + cfg.repo;
+      setSyncLine();
+      return;
+    }
+    var k = due[i++];
+    pushDay(k, cfg).then(function(res){
+      if (res.ok){ S.synced[k] = true; done++; }
+      else fails.push(res.why);
+      next();
+    });
+  }
+  next();
+}
 
 function buildExport(nDays){
   var s = S.settings;
