@@ -225,9 +225,15 @@ button:focus-visible,textarea:focus-visible,input:focus-visible,select:focus-vis
     <p class="fine">Normal-day numbers. Rest and hard days scale calories and carbs from here; protein and fat stay put.</p>
 
     <div class="eyebrow" style="margin-top:16px">Backup</div>
-    <p class="fine">Closed days are written to the session repo, one file per day. Uses the GitHub token already set in the session app. The repo is public, so backed-up days are publicly visible.</p>
+    <p class="fine">Closed days are written to the repo below, one file per day, under data/food/. Fine-grained token, that repo only, Contents read and write. Stored on this device only. A public repo means backed-up days are publicly visible.</p>
+    <div class="fields">
+      <label class="field"><span>Owner</span><input id="f_owner" type="text" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+      <label class="field"><span>Repo</span><input id="f_repo" type="text" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+      <label class="field"><span>Token</span><input id="f_token" type="password" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+    </div>
     <p class="fine" id="syncLine">—</p>
     <div class="actions">
+      <button class="btn ghost" id="saveSync">Save token</button>
       <button class="btn ghost" id="syncNow">Back up now</button>
     </div>
 
@@ -780,6 +786,10 @@ function fillSettings(){
   $("f_carbs").value = S.settings.carbs;
   $("f_fat").value = S.settings.fat;
   $("f_model").value = S.settings.model || DEFAULTS.settings.model;
+  var c = syncCfg() || { owner:"jamiejones2766", repo:"session", token:"" };
+  $("f_owner").value = c.owner;
+  $("f_repo").value = c.repo;
+  $("f_token").value = c.token;
 }
 
 function startApp(){
@@ -806,6 +816,13 @@ $("saveKey").onclick = function(){
 
 $("openSettings").onclick = function(){ fillSettings(); setSyncLine(); $("settings").classList.remove("hide"); };
 $("syncNow").onclick = function(){ syncFoodDays(true); };
+$("saveSync").onclick = function(){
+  var o = $("f_owner").value.trim(), rp = $("f_repo").value.trim(), tk = $("f_token").value.trim();
+  if (!o || !rp || !tk){ syncMsg = "Owner, repo and token all need filling in."; setSyncLine(); return; }
+  saveSyncCfg(o, rp, tk);
+  syncMsg = "Token saved. Backing up…"; setSyncLine();
+  syncFoodDays(true);
+};
 $("closeSettings").onclick = function(){ $("settings").classList.add("hide"); };
 $("saveSettings").onclick = function(){
   S.settings = {
@@ -845,18 +862,39 @@ $("restoreData").onclick = function(){
    github.io origin, so they share one localStorage. Only days
    that have closed get written, each to its own path, so there
    is no SHA fetch and nothing to merge. ─────────────────────── */
-var SYNC_CFG = "jj-sync-cfg";
+var SYNC_CFG = "foodlog.sync.v1";
 var syncMsg = "";
 
-function syncCfg(){
+function readCfgKey(k){
   try {
-    var raw = localStorage.getItem(SYNC_CFG);
+    var raw = localStorage.getItem(k);
     if (raw){
       var c = JSON.parse(raw);
       if (c && c.owner && c.repo && c.token) return c;
     }
   } catch(e){}
   return null;
+}
+
+// Own key first. The session app's key is only readable when both
+// apps run in the same storage partition — an installed home-screen
+// app is sandboxed away from the browser tab even on the same
+// origin — so it is a convenience, not something to depend on.
+function syncCfg(){
+  var own = readCfgKey(SYNC_CFG);
+  if (own) return own;
+  var borrowed = readCfgKey("jj-sync-cfg");
+  if (borrowed){
+    localStorage.setItem(SYNC_CFG, JSON.stringify(borrowed));
+    return borrowed;
+  }
+  return null;
+}
+
+function saveSyncCfg(owner, repo, token){
+  var c = { owner: owner.trim(), repo: repo.trim(), token: token.trim() };
+  localStorage.setItem(SYNC_CFG, JSON.stringify(c));
+  return c;
 }
 
 function b64(str){
@@ -920,7 +958,7 @@ function syncFoodDays(manual){
   if (!S.synced) S.synced = {};
   var cfg = syncCfg();
   if (!cfg){
-    syncMsg = "No GitHub token found. Set one in the session app under Settings.";
+    syncMsg = "No GitHub token set. Fill in owner, repo and token above, then Save token.";
     setSyncLine(); return;
   }
   var today = dayKey(0);
